@@ -24,7 +24,7 @@ const generateMaze = (rows, cols) => {
       const ny = cy + dz;
 
       // Check if within bounds
-      if (nx > 0 && nx < rows && ny > 0 && ny < cols && maze[nx][ny] === 1) {
+      if (nx > 0 && nx < rows - 1 && ny > 0 && ny < cols - 1 && maze[nx][ny] === 1) {
         maze[nx][ny] = 0; // Carve a path
         maze[cx + dx / 2][cy + dz / 2] = 0; // Carve the wall between
         carvePassagesFrom(nx, ny, maze);
@@ -35,6 +35,17 @@ const generateMaze = (rows, cols) => {
   // Start the maze generation from [1, 1]
   maze[1][1] = 0;
   carvePassagesFrom(1, 1, maze);
+
+  // Ensure outer boundaries remain intact
+  for (let i = 0; i < rows; i++) {
+    maze[i][0] = 1; // Left boundary
+    maze[i][cols - 1] = 1; // Right boundary
+  }
+
+  for (let j = 0; j < cols; j++) {
+    maze[0][j] = 1; // Top boundary
+    maze[rows - 1][j] = 1; // Bottom boundary
+  }
 
   return maze;
 };
@@ -50,6 +61,18 @@ const getWallPositions = (mazeLayout) => {
     }
   }
   return positions;
+};
+
+// Get a valid goal position that is not a wall
+const getValidGoalPosition = (mazeLayout) => {
+  for (let i = mazeLayout.length - 1; i > 0; i--) {
+    for (let j = mazeLayout[i].length - 1; j > 0; j--) {
+      if (mazeLayout[i][j] === 0) { // Find the last open cell
+        return [i, 0.5, j];
+      }
+    }
+  }
+  return [mazeLayout.length - 2, 0.5, mazeLayout[0].length - 2];
 };
 
 // Player component with movement logic
@@ -106,11 +129,10 @@ function Player({ mazeLayout, goalPosition, onReachGoal }) {
   }, [position]);
 
   useEffect(() => {
-    // Adjust goal check to be accurate based on player's position
     const [px, , pz] = position;
-    const [gx, , gz] = goalPosition; // Use goalPosition passed as a prop
-    if (Math.abs(px - gx) < 0.2 && Math.abs(pz - gz) < 0.2) { // Adjust margin for win condition
-      onReachGoal(); // Trigger win condition
+    const [gx, , gz] = goalPosition;
+    if (Math.abs(px - gx) < 0.2 && Math.abs(pz - gz) < 0.2) {
+      onReachGoal();
     }
   }, [position, goalPosition, onReachGoal]);
 
@@ -129,7 +151,7 @@ function Player({ mazeLayout, goalPosition, onReachGoal }) {
 function App() {
   const [mazeLayout, setMazeLayout] = useState([]);
   const [wallPositions, setWallPositions] = useState([]);
-  const [goalPosition, setGoalPosition] = useState([8, 0.5, 8]); // Default goal position
+  const [goalPosition, setGoalPosition] = useState([8, 0.5, 8]);
   const [gameStatus, setGameStatus] = useState('Playing');
   const [dimensions, setDimensions] = useState({ rows: 10, cols: 10 });
 
@@ -150,11 +172,11 @@ function App() {
     const newMaze = generateMaze(dimensions.rows, dimensions.cols);
     setMazeLayout(newMaze);
     setWallPositions(getWallPositions(newMaze));
-    setGoalPosition([dimensions.rows - 2, 0.5, dimensions.cols - 2]); // Dynamic goal position based on maze size
+    setGoalPosition(getValidGoalPosition(newMaze)); // Get a valid goal position
   }, [dimensions]);
 
   const handleWin = () => {
-    setGameStatus('Won'); // Set the game status to 'Won' when the goal is reached
+    setGameStatus('Won');
   };
 
   const resetGame = () => {
@@ -162,19 +184,16 @@ function App() {
     const newMaze = generateMaze(dimensions.rows, dimensions.cols);
     setMazeLayout(newMaze);
     setWallPositions(getWallPositions(newMaze));
-    setGoalPosition([dimensions.rows - 2, 0.5, dimensions.cols - 2]);
+    setGoalPosition(getValidGoalPosition(newMaze));
   };
 
-  // Custom camera for orthographic view
   const CustomCamera = () => {
     const { camera, size } = useThree();
-
     const zoomFactor = Math.min(size.width / (dimensions.cols * 2), size.height / (dimensions.rows * 2));
     camera.zoom = zoomFactor;
-    camera.position.set(dimensions.cols / 2, 20, dimensions.rows / 2); // Ensure the camera is directly above the maze for top-down view
-    camera.lookAt(dimensions.cols / 2, 0, dimensions.rows / 2); // Look at the center of the maze
+    camera.position.set(dimensions.cols / 2, 20, dimensions.rows / 2);
+    camera.lookAt(dimensions.cols / 2, 0, dimensions.rows / 2);
     camera.updateProjectionMatrix();
-
     return null;
   };
 
@@ -187,34 +206,25 @@ function App() {
           </div>
           <Canvas
             orthographic
-            style={{ height: '100vh', width: '100vw', background: '#000' }} // Set black background for contrast
+            style={{ height: '100vh', width: '100vw', background: '#000' }}
           >
             <CustomCamera />
-            {/* Lighting Effects */}
             <ambientLight intensity={0.5} />
             <directionalLight position={[0, 5, 5]} />
-
-            {/* Maze Walls */}
             {wallPositions.map((position, index) => (
               <Box key={index} args={[1, 1, 1]} position={position}>
                 <meshStandardMaterial attach="material" color="blue" />
               </Box>
             ))}
-
-            {/* Player */}
             <Player mazeLayout={mazeLayout} goalPosition={goalPosition} onReachGoal={handleWin} />
-
-            {/* Goal with Visual Effect */}
             <mesh position={goalPosition}>
               <coneGeometry args={[0.3, 1, 32]} />
               <meshStandardMaterial color="red" emissive="orange" />
             </mesh>
-
-            {/* Ground Plane */}
             <Plane
               args={[dimensions.cols, dimensions.rows]}
               rotation={[-Math.PI / 2, 0, 0]}
-              position={[dimensions.cols / 2, -0.5, dimensions.rows / 2]} // Center the ground plane
+              position={[dimensions.cols / 2, -0.5, dimensions.rows / 2]}
             >
               <meshStandardMaterial attach="material" color="green" />
             </Plane>
