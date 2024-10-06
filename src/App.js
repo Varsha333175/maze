@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Box, Sphere, Plane } from '@react-three/drei';
+import { Box, Sphere, Plane, Cylinder } from '@react-three/drei';
 import * as THREE from 'three';
 
-// Function to generate a dynamic maze layout based on dimensions
+// Function to generate a dynamic maze layout with multiple paths
 const generateMaze = (rows, cols) => {
   const maze = Array.from({ length: rows }, () =>
     Array.from({ length: cols }, () => 1) // Initialize with walls (1)
@@ -30,6 +30,21 @@ const generateMaze = (rows, cols) => {
         carvePassagesFrom(nx, ny, maze);
       }
     });
+
+    // Add a chance to create multiple paths
+    if (Math.random() > 0.7) {
+      const extraDirections = [
+        [-2, 0], [2, 0], [0, -2], [0, 2]
+      ];
+
+      extraDirections.forEach(([dx, dz]) => {
+        const nx = cx + dx;
+        const ny = cy + dz;
+        if (nx > 0 && nx < rows - 1 && ny > 0 && ny < cols - 1) {
+          maze[cx + dx / 2][cy + dz / 2] = 0; // Create additional random paths
+        }
+      });
+    }
   };
 
   // Start the maze generation from [1, 1]
@@ -75,9 +90,51 @@ const getValidGoalPosition = (mazeLayout) => {
   return [mazeLayout.length - 2, 0.5, mazeLayout[0].length - 2];
 };
 
-// Player component with movement logic
-function Player({ mazeLayout, goalPosition, onReachGoal }) {
+// Function to find the shortest path using BFS
+const findShortestPath = (maze, start, goal) => {
+  const [rows, cols] = [maze.length, maze[0].length];
+  const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+  const queue = [[start]];
+  const visited = Array.from({ length: rows }, () => Array(cols).fill(false));
+  visited[start[0]][start[2]] = true;
+
+  while (queue.length > 0) {
+    const path = queue.shift();
+    const [x, , z] = path[path.length - 1]; // Current position
+
+    if (x === goal[0] && z === goal[2]) return path; // Reached the goal
+
+    for (const [dx, dz] of directions) {
+      const [nx, nz] = [x + dx, z + dz];
+
+      if (nx >= 0 && nx < rows && nz >= 0 && nz < cols && maze[nx][nz] === 0 && !visited[nx][nz]) {
+        visited[nx][nz] = true;
+        queue.push([...path, [nx, 0.5, nz]]);
+      }
+    }
+  }
+  return null; // No path found
+};
+
+// Arrow component to show trace of movement
+const Arrow = ({ position, direction, color = "yellow" }) => {
+  // Direction is an angle for rotation
+  return (
+    <Cylinder
+      position={position}
+      args={[0.1, 0.1, 0.5, 8]}
+      rotation={[0, direction, Math.PI / 2]}
+    >
+      <meshStandardMaterial attach="material" color={color} />
+    </Cylinder>
+  );
+};
+
+// Player component with movement logic and trace leaving
+function Player({ mazeLayout, goalPosition, onReachGoal, shortestPath }) {
   const [position, setPosition] = useState([1, 0.5, 1]); // Initial player position
+  const [playerPath, setPlayerPath] = useState([[1, 0.5, 1]]); // Track player path
+  const [traces, setTraces] = useState([]); // Track the direction of movement (for arrows)
   const playerRef = useRef();
   const speed = 0.1;
 
@@ -90,23 +147,28 @@ function Player({ mazeLayout, goalPosition, onReachGoal }) {
   const handleKeyDown = (event) => {
     const [x, y, z] = position;
     let newPosition = [x, y, z];
+    let direction = 0; // Direction in radians
 
     switch (event.key) {
       case 'ArrowUp':
       case 'w':
-        newPosition = [x, y, z - speed];
+        newPosition = [x, y, z - 1];
+        direction = Math.PI; // Up
         break;
       case 'ArrowDown':
       case 's':
-        newPosition = [x, y, z + speed];
+        newPosition = [x, y, z + 1];
+        direction = 0; // Down
         break;
       case 'ArrowLeft':
       case 'a':
-        newPosition = [x - speed, y, z];
+        newPosition = [x - 1, y, z];
+        direction = Math.PI / 2; // Left
         break;
       case 'ArrowRight':
       case 'd':
-        newPosition = [x + speed, y, z];
+        newPosition = [x + 1, y, z];
+        direction = -Math.PI / 2; // Right
         break;
       default:
         break;
@@ -118,6 +180,8 @@ function Player({ mazeLayout, goalPosition, onReachGoal }) {
 
     if (!collision) {
       setPosition(newPosition);
+      setPlayerPath([...playerPath, newPosition]);
+      setTraces([...traces, { position: newPosition, direction }]); // Add trace
     }
   };
 
@@ -132,28 +196,37 @@ function Player({ mazeLayout, goalPosition, onReachGoal }) {
     const [px, , pz] = position;
     const [gx, , gz] = goalPosition;
     if (Math.abs(px - gx) < 0.2 && Math.abs(pz - gz) < 0.2) {
-      onReachGoal();
+      onReachGoal(playerPath); // Check if player path is the shortest
     }
-  }, [position, goalPosition, onReachGoal]);
+  }, [position, goalPosition, playerPath, onReachGoal]);
 
   return (
-    <group ref={playerRef} position={position}>
-      <Box args={[0.5, 1, 0.5]}>
-        <meshStandardMaterial attach="material" color="white" />
-      </Box>
-      <Sphere args={[0.3]} position={[0, 0.8, 0]}>
-        <meshStandardMaterial attach="material" color="white" />
-      </Sphere>
-    </group>
+    <>
+      <group ref={playerRef} position={position}>
+        <Box args={[0.5, 1, 0.5]}>
+          <meshStandardMaterial attach="material" color="white" />
+        </Box>
+        <Sphere args={[0.3]} position={[0, 0.8, 0]}>
+          <meshStandardMaterial attach="material" color="white" />
+        </Sphere>
+      </group>
+
+      {/* Render traces (arrows) for player's movement */}
+      {traces.map((trace, index) => (
+        <Arrow key={index} position={trace.position} direction={trace.direction} />
+      ))}
+    </>
   );
 }
 
 function App() {
   const [mazeLayout, setMazeLayout] = useState([]);
   const [wallPositions, setWallPositions] = useState([]);
-  const [goalPosition, setGoalPosition] = useState([8, 0.5, 8]);
+  const [goalPosition, setGoalPosition] = useState([8, 0.5, 8]); // Default goal position
   const [gameStatus, setGameStatus] = useState('Playing');
   const [dimensions, setDimensions] = useState({ rows: 10, cols: 10 });
+  const [shortestPath, setShortestPath] = useState([]);
+  const [previousMaze, setPreviousMaze] = useState(null);
 
   const handleResize = () => {
     const rows = Math.floor(window.innerHeight / 40);
@@ -169,22 +242,46 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const newMaze = generateMaze(dimensions.rows, dimensions.cols);
-    setMazeLayout(newMaze);
-    setWallPositions(getWallPositions(newMaze));
-    setGoalPosition(getValidGoalPosition(newMaze)); // Get a valid goal position
-  }, [dimensions]);
+    if (!previousMaze) {
+      // Generate a new maze if there is no saved previous maze
+      const newMaze = generateMaze(dimensions.rows, dimensions.cols);
+      setMazeLayout(newMaze);
+      setWallPositions(getWallPositions(newMaze));
+      const validGoalPosition = getValidGoalPosition(newMaze);
+      setGoalPosition(validGoalPosition);
 
-  const handleWin = () => {
-    setGameStatus('Won');
+      const shortest = findShortestPath(newMaze, [1, 0.5, 1], validGoalPosition);
+      setShortestPath(shortest); // Store the shortest path
+      setPreviousMaze(newMaze); // Save the current maze
+    } else {
+      // Use the saved maze
+      setMazeLayout(previousMaze);
+      setWallPositions(getWallPositions(previousMaze));
+      const validGoalPosition = getValidGoalPosition(previousMaze);
+      setGoalPosition(validGoalPosition);
+
+      const shortest = findShortestPath(previousMaze, [1, 0.5, 1], validGoalPosition);
+      setShortestPath(shortest);
+    }
+  }, [dimensions, previousMaze]);
+
+  const handleWin = (playerPath) => {
+    if (JSON.stringify(playerPath) === JSON.stringify(shortestPath)) {
+      setGameStatus('Won via Shortest Path'); // Player took the shortest path
+    } else {
+      setGameStatus('Not the Shortest Path'); // Player didn't take the shortest path
+    }
   };
 
-  const resetGame = () => {
+  const retryGame = () => {
+    // Retry with the same maze
     setGameStatus('Playing');
-    const newMaze = generateMaze(dimensions.rows, dimensions.cols);
-    setMazeLayout(newMaze);
-    setWallPositions(getWallPositions(newMaze));
-    setGoalPosition(getValidGoalPosition(newMaze));
+  };
+
+  const newGame = () => {
+    // Start a new game with a new maze
+    setPreviousMaze(null); // Clear previous maze to generate a new one
+    setGameStatus('Playing');
   };
 
   const CustomCamera = () => {
@@ -194,6 +291,7 @@ function App() {
     camera.position.set(dimensions.cols / 2, 20, dimensions.rows / 2);
     camera.lookAt(dimensions.cols / 2, 0, dimensions.rows / 2);
     camera.updateProjectionMatrix();
+
     return null;
   };
 
@@ -204,36 +302,39 @@ function App() {
           <div style={{ position: 'absolute', top: '10px', left: '10px', color: 'white' }}>
             <p>Use W (up), A (left), S (down), D (right) to navigate</p>
           </div>
-          <Canvas
-            orthographic
-            style={{ height: '100vh', width: '100vw', background: '#000' }}
-          >
+          <Canvas orthographic style={{ height: '100vh', width: '100vw', background: '#000' }}>
             <CustomCamera />
             <ambientLight intensity={0.5} />
             <directionalLight position={[0, 5, 5]} />
+
             {wallPositions.map((position, index) => (
               <Box key={index} args={[1, 1, 1]} position={position}>
                 <meshStandardMaterial attach="material" color="blue" />
               </Box>
             ))}
-            <Player mazeLayout={mazeLayout} goalPosition={goalPosition} onReachGoal={handleWin} />
+
+            {/* Render shortest path as green arrows */}
+            {shortestPath.map((pos, index) => (
+              <Arrow key={index} position={pos} direction={0} color="green" />
+            ))}
+
+            <Player mazeLayout={mazeLayout} goalPosition={goalPosition} onReachGoal={handleWin} shortestPath={shortestPath} />
+
             <mesh position={goalPosition}>
               <coneGeometry args={[0.3, 1, 32]} />
               <meshStandardMaterial color="red" emissive="orange" />
             </mesh>
-            <Plane
-              args={[dimensions.cols, dimensions.rows]}
-              rotation={[-Math.PI / 2, 0, 0]}
-              position={[dimensions.cols / 2, -0.5, dimensions.rows / 2]}
-            >
+
+            <Plane args={[dimensions.cols, dimensions.rows]} rotation={[-Math.PI / 2, 0, 0]} position={[dimensions.cols / 2, -0.5, dimensions.rows / 2]}>
               <meshStandardMaterial attach="material" color="green" />
             </Plane>
           </Canvas>
         </>
       ) : (
         <div style={{ textAlign: 'center', marginTop: '20vh' }}>
-          <h1>You Win!</h1>
-          <button onClick={resetGame}>Play Again</button>
+          <h1>{gameStatus === 'Won via Shortest Path' ? 'You have reached the goal via the shortest path!' : 'This is not the shortest path.'}</h1>
+          <button onClick={retryGame}>Retry</button>
+          <button onClick={newGame}>New Game</button>
         </div>
       )}
     </>
