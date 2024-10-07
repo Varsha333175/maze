@@ -3,67 +3,113 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Box, Sphere, Plane, Cylinder } from '@react-three/drei';
 import * as THREE from 'three';
 
-// Function to generate a dynamic maze layout with multiple paths
+// Arrays to store path types for color-coding
+const mainPathCoords = [];
+const misleadingPathCoords = [];
+const deadEndCoords = [];
+const loopCoords = [];
+
 const generateMaze = (rows, cols) => {
   const maze = Array.from({ length: rows }, () =>
-    Array.from({ length: cols }, () => 1) // Initialize with walls (1)
+    Array.from({ length: cols }, () => 1)
   );
 
   const carvePassagesFrom = (cx, cy, maze) => {
     const directions = [
-      [-2, 0], // up
-      [2, 0],  // down
-      [0, -2], // left
-      [0, 2],  // right
+      [-2, 0], [2, 0], [0, -2], [0, 2]
     ];
 
-    directions.sort(() => Math.random() - 0.5); // Shuffle directions
+    directions.sort(() => Math.random() - 0.5);
 
     directions.forEach(([dx, dz]) => {
       const nx = cx + dx;
       const ny = cy + dz;
 
-      // Check if within bounds
       if (nx > 0 && nx < rows - 1 && ny > 0 && ny < cols - 1 && maze[nx][ny] === 1) {
-        maze[nx][ny] = 0; // Carve a path
-        maze[cx + dx / 2][cy + dz / 2] = 0; // Carve the wall between
+        maze[nx][ny] = 0;
+        maze[cx + dx / 2][cy + dz / 2] = 0;
+        mainPathCoords.push([cx + dx / 2, cy + dz / 2]);
         carvePassagesFrom(nx, ny, maze);
       }
     });
-
-    // Add a chance to create multiple paths
-    if (Math.random() > 0.7) {
-      const extraDirections = [
-        [-2, 0], [2, 0], [0, -2], [0, 2]
-      ];
-
-      extraDirections.forEach(([dx, dz]) => {
-        const nx = cx + dx;
-        const ny = cy + dz;
-        if (nx > 0 && nx < rows - 1 && ny > 0 && ny < cols - 1) {
-          maze[cx + dx / 2][cy + dz / 2] = 0; // Create additional random paths
-        }
-      });
-    }
   };
 
-  // Start the maze generation from [1, 1]
   maze[1][1] = 0;
   carvePassagesFrom(1, 1, maze);
 
-  // Ensure outer boundaries remain intact
   for (let i = 0; i < rows; i++) {
-    maze[i][0] = 1; // Left boundary
-    maze[i][cols - 1] = 1; // Right boundary
+    maze[i][0] = 1;
+    maze[i][cols - 1] = 1;
   }
 
   for (let j = 0; j < cols; j++) {
-    maze[0][j] = 1; // Top boundary
-    maze[rows - 1][j] = 1; // Bottom boundary
+    maze[0][j] = 1;
+    maze[rows - 1][j] = 1;
   }
 
+  const addMisleadingPaths = () => {
+    for (let i = 1; i < rows - 1; i += 2) {
+      for (let j = 1; j < cols - 1; j += 2) {
+        const probability = Math.random();
+        
+        if (probability > 0.3) { // Increase misleading paths
+          const altDirections = [[-2, 0], [2, 0], [0, -2], [0, 2]];
+          altDirections.sort(() => Math.random() - 0.5);
+
+          for (const [dx, dz] of altDirections) {
+            const nx = i + dx;
+            const ny = j + dz;
+
+            if (
+              nx > 0 && nx < rows - 1 && ny > 0 && ny < cols - 1 &&
+              maze[i][j] === 0 && maze[nx][ny] === 1 &&
+              maze[(i + nx) / 2] && maze[(i + nx) / 2][(j + ny) / 2] !== undefined
+            ) {
+              maze[(i + nx) / 2][(j + ny) / 2] = 0;
+              maze[nx][ny] = 0;
+              const pathType = Math.random();
+
+              if (pathType < 0.4) {
+                // Dead-end
+                deadEndCoords.push([nx, ny]);
+                break;
+              } else if (pathType < 0.7) {
+                // Loop path
+                loopCoords.push([nx, ny]);
+              } else {
+                // Misleading path
+                misleadingPathCoords.push([nx, ny]);
+              }
+              break;
+            }
+          }
+        }
+      }
+    }
+  };
+
+  addMisleadingPaths();
   return maze;
 };
+
+// In your rendering function, use different colors for different paths
+{mainPathCoords.map((pos, index) => (
+  <Arrow key={index} position={[pos[0], 0.5, pos[1]]} direction={0} color="green" />
+))}
+
+{misleadingPathCoords.map((pos, index) => (
+  <Arrow key={index} position={[pos[0], 0.5, pos[1]]} direction={0} color="yellow" />
+))}
+
+{deadEndCoords.map((pos, index) => (
+  <Arrow key={index} position={[pos[0], 0.5, pos[1]]} direction={0} color="red" />
+))}
+
+{loopCoords.map((pos, index) => (
+  <Arrow key={index} position={[pos[0], 0.5, pos[1]]} direction={0} color="blue" />
+))}
+
+
 
 // Get wall positions based on the dynamically generated maze
 const getWallPositions = (mazeLayout) => {
@@ -118,7 +164,6 @@ const findShortestPath = (maze, start, goal) => {
 
 // Arrow component to show trace of movement
 const Arrow = ({ position, direction, color = "yellow" }) => {
-  // Direction is an angle for rotation
   return (
     <Cylinder
       position={position}
@@ -136,7 +181,6 @@ function Player({ mazeLayout, goalPosition, onReachGoal, shortestPath }) {
   const [playerPath, setPlayerPath] = useState([[1, 0.5, 1]]); // Track player path
   const [traces, setTraces] = useState([]); // Track the direction of movement (for arrows)
   const playerRef = useRef();
-  const speed = 0.1;
 
   useFrame(() => {
     if (playerRef.current) {
@@ -222,17 +266,26 @@ function Player({ mazeLayout, goalPosition, onReachGoal, shortestPath }) {
 function App() {
   const [mazeLayout, setMazeLayout] = useState([]);
   const [wallPositions, setWallPositions] = useState([]);
-  const [goalPosition, setGoalPosition] = useState([8, 0.5, 8]); // Default goal position
+  const [goalPosition, setGoalPosition] = useState([8, 0.5, 8]);
   const [gameStatus, setGameStatus] = useState('Playing');
   const [dimensions, setDimensions] = useState({ rows: 10, cols: 10 });
   const [shortestPath, setShortestPath] = useState([]);
-  const [previousMaze, setPreviousMaze] = useState(null);
 
   const handleResize = () => {
     const rows = Math.floor(window.innerHeight / 40);
     const cols = Math.floor(window.innerWidth / 40);
     const mazeSize = Math.min(rows, cols);
     setDimensions({ rows: mazeSize, cols: mazeSize });
+
+    // Regenerate maze with new dimensions
+    const newMaze = generateMaze(mazeSize, mazeSize);
+    setMazeLayout(newMaze);
+    setWallPositions(getWallPositions(newMaze));
+    const validGoalPosition = getValidGoalPosition(newMaze);
+    setGoalPosition(validGoalPosition);
+
+    const shortest = findShortestPath(newMaze, [1, 0.5, 1], validGoalPosition);
+    setShortestPath(shortest);
   };
 
   useEffect(() => {
@@ -241,57 +294,26 @@ function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  useEffect(() => {
-    if (!previousMaze) {
-      // Generate a new maze if there is no saved previous maze
-      const newMaze = generateMaze(dimensions.rows, dimensions.cols);
-      setMazeLayout(newMaze);
-      setWallPositions(getWallPositions(newMaze));
-      const validGoalPosition = getValidGoalPosition(newMaze);
-      setGoalPosition(validGoalPosition);
-
-      const shortest = findShortestPath(newMaze, [1, 0.5, 1], validGoalPosition);
-      setShortestPath(shortest); // Store the shortest path
-      setPreviousMaze(newMaze); // Save the current maze
-    } else {
-      // Use the saved maze
-      setMazeLayout(previousMaze);
-      setWallPositions(getWallPositions(previousMaze));
-      const validGoalPosition = getValidGoalPosition(previousMaze);
-      setGoalPosition(validGoalPosition);
-
-      const shortest = findShortestPath(previousMaze, [1, 0.5, 1], validGoalPosition);
-      setShortestPath(shortest);
-    }
-  }, [dimensions, previousMaze]);
-
   const handleWin = (playerPath) => {
-    if (JSON.stringify(playerPath) === JSON.stringify(shortestPath)) {
+    const roundedPlayerPath = playerPath.map(([x, , z]) => [Math.round(x), Math.round(z)]);
+    const roundedShortestPath = shortestPath.map(([x, , z]) => [Math.round(x), Math.round(z)]);
+    
+    if (JSON.stringify(roundedPlayerPath) === JSON.stringify(roundedShortestPath)) {
       setGameStatus('Won via Shortest Path'); // Player took the shortest path
     } else {
       setGameStatus('Not the Shortest Path'); // Player didn't take the shortest path
     }
   };
-
-  const retryGame = () => {
-    // Retry with the same maze
-    setGameStatus('Playing');
-  };
-
-  const newGame = () => {
-    // Start a new game with a new maze
-    setPreviousMaze(null); // Clear previous maze to generate a new one
-    setGameStatus('Playing');
-  };
+  
+  
 
   const CustomCamera = () => {
     const { camera, size } = useThree();
-    const zoomFactor = Math.min(size.width / (dimensions.cols * 2), size.height / (dimensions.rows * 2));
+    const zoomFactor = Math.min(size.width / dimensions.cols, size.height / dimensions.rows);
     camera.zoom = zoomFactor;
     camera.position.set(dimensions.cols / 2, 20, dimensions.rows / 2);
     camera.lookAt(dimensions.cols / 2, 0, dimensions.rows / 2);
     camera.updateProjectionMatrix();
-
     return null;
   };
 
@@ -325,7 +347,7 @@ function App() {
               <meshStandardMaterial color="red" emissive="orange" />
             </mesh>
 
-            <Plane args={[dimensions.cols, dimensions.rows]} rotation={[-Math.PI / 2, 0, 0]} position={[dimensions.cols / 2, -0.5, dimensions.rows / 2]}>
+            <Plane args={[dimensions.cols, dimensions.rows]} rotation={[-Math.PI / 2, 0, 0]} position={[(dimensions.cols - 1) / 2, -0.5, (dimensions.rows - 1) / 2]}>
               <meshStandardMaterial attach="material" color="green" />
             </Plane>
           </Canvas>
@@ -333,8 +355,7 @@ function App() {
       ) : (
         <div style={{ textAlign: 'center', marginTop: '20vh' }}>
           <h1>{gameStatus === 'Won via Shortest Path' ? 'You have reached the goal via the shortest path!' : 'This is not the shortest path.'}</h1>
-          <button onClick={retryGame}>Retry</button>
-          <button onClick={newGame}>New Game</button>
+          <button onClick={() => setGameStatus('Playing')}>Retry</button>
         </div>
       )}
     </>
